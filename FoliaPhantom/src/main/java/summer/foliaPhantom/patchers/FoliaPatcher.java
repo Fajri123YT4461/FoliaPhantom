@@ -7,6 +7,7 @@ import org.bukkit.World;
 import org.bukkit.WorldCreator;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitScheduler;
 import org.bukkit.scheduler.BukkitTask;
@@ -30,12 +31,10 @@ public final class FoliaPatcher {
             Map.entry("runTaskAsynchronously(Lorg/bukkit/plugin/Plugin;Ljava/lang/Runnable;)Lorg/bukkit/scheduler/BukkitTask;", true),
             Map.entry("runTaskLaterAsynchronously(Lorg/bukkit/plugin/Plugin;Ljava/lang/Runnable;J)Lorg/bukkit/scheduler/BukkitTask;", true),
             Map.entry("runTaskTimerAsynchronously(Lorg/bukkit/plugin/Plugin;Ljava/lang/Runnable;JJ)Lorg/bukkit/scheduler/BukkitTask;", true),
-            // Legacy methods returning int
             Map.entry("scheduleSyncDelayedTask(Lorg/bukkit/plugin/Plugin;Ljava/lang/Runnable;J)I", true),
             Map.entry("scheduleSyncRepeatingTask(Lorg/bukkit/plugin/Plugin;Ljava/lang/Runnable;JJ)I", true),
             Map.entry("scheduleAsyncDelayedTask(Lorg/bukkit/plugin/Plugin;Ljava/lang/Runnable;J)I", true),
             Map.entry("scheduleAsyncRepeatingTask(Lorg/bukkit/plugin/Plugin;Ljava/lang/Runnable;JJ)I", true),
-            // Cancel tasks
             Map.entry("cancelTask(I)V", true),
             Map.entry("cancelTasks(Lorg/bukkit/plugin/Plugin;)V", true),
             Map.entry("cancelAllTasks()V", true)
@@ -44,20 +43,20 @@ public final class FoliaPatcher {
     public static final Map<String, String> UNSAFE_METHOD_MAP = new ConcurrentHashMap<>();
 
     static {
-        // Format: <Original Method Signature, Patcher Method Name>
         UNSAFE_METHOD_MAP.put("setType(Lorg/bukkit/Material;)V", "safeSetType");
         UNSAFE_METHOD_MAP.put("setType(Lorg/bukkit/Material;Z)V", "safeSetTypeWithPhysics");
+        
+        UNSAFE_METHOD_MAP.put("teleport(Lorg/bukkit/Location;)Z", "safeTeleportLocation");
+        UNSAFE_METHOD_MAP.put("teleport(Lorg/bukkit/entity/Entity;)Z", "safeTeleportEntity");
+        UNSAFE_METHOD_MAP.put("teleport(Lorg/bukkit/Location;Lorg/bukkit/event/player/PlayerTeleportEvent$TeleportCause;)Z", "safeTeleportLocationWithCause");
+        UNSAFE_METHOD_MAP.put("teleport(Lorg/bukkit/entity/Entity;Lorg/bukkit/event/player/PlayerTeleportEvent$TeleportCause;)Z", "safeTeleportEntityWithCause");
 
 
-        // World Generation related methods
         REPLACEMENT_MAP.put("getDefaultWorldGenerator(Ljava/lang/String;Ljava/lang/String;)Lorg/bukkit/generator/ChunkGenerator;", true);
         REPLACEMENT_MAP.put("createWorld(Lorg/bukkit/WorldCreator;)Lorg/bukkit/World;", true);
-        // BukkitRunnable is handled by transformer, no need for separate map entry if signature is the same
     }
 
     private FoliaPatcher() {}
-
-    // --- World Generation Wrappers ---
 
     public static org.bukkit.generator.ChunkGenerator getDefaultWorldGenerator(Plugin plugin, String worldName, String id) {
         org.bukkit.generator.ChunkGenerator originalGenerator = plugin.getDefaultWorldGenerator(worldName, id);
@@ -66,11 +65,10 @@ public final class FoliaPatcher {
     }
 
     public static World createWorld(org.bukkit.WorldCreator creator) {
-        System.out.println("[Phantom-extra] Intercepted createWorld call. Using creator.createWorld() on a dedicated thread...");
+        System.out.println("[Phantom-extra] Intercepting createWorld call. Using creator.createWorld() on a dedicated thread...");
         Callable<World> task = creator::createWorld;
         Future<World> future = worldGenExecutor.submit(task);
         try {
-            // Block the calling thread (from the plugin) until our executor thread is done.
             return future.get();
         } catch (InterruptedException | ExecutionException e) {
             System.err.println("[Phantom-extra] Failed to create world via creator.createWorld().");
@@ -213,7 +211,6 @@ public final class FoliaPatcher {
     }
 
     public static BukkitTask runTaskTimerAsynchronously_onRunnable(org.bukkit.scheduler.BukkitRunnable runnable, Plugin plugin, long delay, long period) {
-        // This is the wrapper for BukkitRunnable calls. It should behave like the original BukkitScheduler method.
         ScheduledTask foliaTask = Bukkit.getAsyncScheduler().runAtFixedRate(plugin, t -> runnable.run(), delay * 50, period * 50, TimeUnit.MILLISECONDS);
         int taskId = taskIdCounter.getAndIncrement();
         runningTasks.put(taskId, foliaTask);
@@ -302,8 +299,6 @@ public final class FoliaPatcher {
         runningTasks.clear();
     }
 
-    // --- Entity Scheduler Wrappers ---
-
     public static BukkitTask folia_runTask(Entity entity, Plugin plugin, Runnable runnable) {
         int taskId = taskIdCounter.getAndIncrement();
         Runnable wrappedRunnable = wrapRunnable(runnable, taskId, false);
@@ -335,8 +330,6 @@ public final class FoliaPatcher {
         return folia_runTaskTimer(entity, plugin, runnable, delay, period).getTaskId();
     }
 
-    // --- Thread-Safety Wrappers ---
-
     public static void safeSetType(Block block, org.bukkit.Material material) {
         if (Bukkit.isPrimaryThread()) {
             block.setType(material);
@@ -354,6 +347,68 @@ public final class FoliaPatcher {
             Bukkit.getRegionScheduler().run(FoliaPhantomExtra.getInstance(), block.getLocation(), task -> {
                 block.setType(material, applyPhysics);
             });
+        }
+    }
+
+    public static boolean safeTeleportLocation(Player player, Location location) {
+        if (Bukkit.isPrimaryThread()) {
+            return player.teleport(location);
+        } else {
+            CompletableFuture<Boolean> future = player.teleportAsync(location);
+            try {
+                return future.get();
+            } catch (InterruptedException | ExecutionException e) {
+                System.err.println("[Phantom-extra] Failed to perform asynchronous teleport for player " + player.getName() + " to location " + location + ".");
+                e.printStackTrace();
+                return false;
+            }
+        }
+    }
+
+    public static boolean safeTeleportEntity(Player player, Entity entity) {
+        if (Bukkit.isPrimaryThread()) {
+            return player.teleport(entity);
+        } else {
+            // Corrected: Get location from entity for teleportAsync
+            CompletableFuture<Boolean> future = player.teleportAsync(entity.getLocation());
+            try {
+                return future.get();
+            } catch (InterruptedException | ExecutionException e) {
+                System.err.println("[Phantom-extra] Failed to perform asynchronous teleport for player " + player.getName() + " to entity " + entity.getName() + ".");
+                e.printStackTrace();
+                return false;
+            }
+        }
+    }
+
+    public static boolean safeTeleportLocationWithCause(Player player, Location location, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause) {
+        if (Bukkit.isPrimaryThread()) {
+            return player.teleport(location, cause);
+        } else {
+            CompletableFuture<Boolean> future = player.teleportAsync(location, cause);
+            try {
+                return future.get();
+            } catch (InterruptedException | ExecutionException e) {
+                System.err.println("[Phantom-extra] Failed to perform asynchronous teleport with cause for player " + player.getName() + " to location " + location + " with cause " + cause + ".");
+                e.printStackTrace();
+                return false;
+            }
+        }
+    }
+
+    public static boolean safeTeleportEntityWithCause(Player player, Entity entity, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause) {
+        if (Bukkit.isPrimaryThread()) {
+            return player.teleport(entity, cause);
+        } else {
+            // Corrected: Get location from entity for teleportAsync
+            CompletableFuture<Boolean> future = player.teleportAsync(entity.getLocation(), cause);
+            try {
+                return future.get();
+            } catch (InterruptedException | ExecutionException e) {
+                System.err.println("[Phantom-extra] Failed to perform asynchronous teleport with cause for player " + player.getName() + " to entity " + entity.getName() + " with cause " + cause + ".");
+                e.printStackTrace();
+                return false;
+            }
         }
     }
 }
