@@ -45,7 +45,7 @@ public final class FoliaPatcher {
     static {
         UNSAFE_METHOD_MAP.put("setType(Lorg/bukkit/Material;)V", "safeSetType");
         UNSAFE_METHOD_MAP.put("setType(Lorg/bukkit/Material;Z)V", "safeSetTypeWithPhysics");
-        
+
         UNSAFE_METHOD_MAP.put("teleport(Lorg/bukkit/Location;)Z", "safeTeleportLocation");
         UNSAFE_METHOD_MAP.put("teleport(Lorg/bukkit/entity/Entity;)Z", "safeTeleportEntity");
         UNSAFE_METHOD_MAP.put("teleport(Lorg/bukkit/Location;Lorg/bukkit/event/player/PlayerTeleportEvent$TeleportCause;)Z", "safeTeleportLocationWithCause");
@@ -78,7 +78,7 @@ public final class FoliaPatcher {
     }
 
     public static class FoliaChunkGenerator extends org.bukkit.generator.ChunkGenerator {
-            final org.bukkit.generator.ChunkGenerator original;
+        final org.bukkit.generator.ChunkGenerator original;
 
         public FoliaChunkGenerator(org.bukkit.generator.ChunkGenerator original) {
             this.original = original;
@@ -350,62 +350,60 @@ public final class FoliaPatcher {
         }
     }
 
-    public static boolean safeTeleportLocation(Player player, Location location) {
+    public static boolean safeTeleportLocation(Entity entity, Location location) {
         if (Bukkit.isPrimaryThread()) {
-            return player.teleport(location);
+            return entity.teleport(location);
         } else {
-            CompletableFuture<Boolean> future = player.teleportAsync(location);
+            CompletableFuture<Boolean> future = entity.teleportAsync(location);
             try {
                 return future.get();
             } catch (InterruptedException | ExecutionException e) {
-                System.err.println("[Phantom-extra] Failed to perform asynchronous teleport for player " + player.getName() + " to location " + location + ".");
+                System.err.println("[Phantom-extra] Failed to perform asynchronous teleport for entity " + entity.getName() + " to location " + location + ".");
                 e.printStackTrace();
                 return false;
             }
         }
     }
 
-    public static boolean safeTeleportEntity(Player player, Entity entity) {
+    public static boolean safeTeleportEntity(Entity sourceEntity, Entity targetEntity) {
         if (Bukkit.isPrimaryThread()) {
-            return player.teleport(entity);
+            return sourceEntity.teleport(targetEntity);
         } else {
-            // Corrected: Get location from entity for teleportAsync
-            CompletableFuture<Boolean> future = player.teleportAsync(entity.getLocation());
+            CompletableFuture<Boolean> future = sourceEntity.teleportAsync(targetEntity.getLocation());
             try {
                 return future.get();
             } catch (InterruptedException | ExecutionException e) {
-                System.err.println("[Phantom-extra] Failed to perform asynchronous teleport for player " + player.getName() + " to entity " + entity.getName() + ".");
+                System.err.println("[Phantom-extra] Failed to perform asynchronous teleport for entity " + sourceEntity.getName() + " to entity " + targetEntity.getName() + ".");
                 e.printStackTrace();
                 return false;
             }
         }
     }
 
-    public static boolean safeTeleportLocationWithCause(Player player, Location location, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause) {
+    public static boolean safeTeleportLocationWithCause(Entity entity, Location location, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause) {
         if (Bukkit.isPrimaryThread()) {
-            return player.teleport(location, cause);
+            return entity.teleport(location, cause);
         } else {
-            CompletableFuture<Boolean> future = player.teleportAsync(location, cause);
+            CompletableFuture<Boolean> future = entity.teleportAsync(location, cause);
             try {
                 return future.get();
             } catch (InterruptedException | ExecutionException e) {
-                System.err.println("[Phantom-extra] Failed to perform asynchronous teleport with cause for player " + player.getName() + " to location " + location + " with cause " + cause + ".");
+                System.err.println("[Phantom-extra] Failed to perform asynchronous teleport with cause for entity " + entity.getName() + " to location " + location + " with cause " + cause + ".");
                 e.printStackTrace();
                 return false;
             }
         }
     }
 
-    public static boolean safeTeleportEntityWithCause(Player player, Entity entity, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause) {
+    public static boolean safeTeleportEntityWithCause(Entity sourceEntity, Entity targetEntity, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause) {
         if (Bukkit.isPrimaryThread()) {
-            return player.teleport(entity, cause);
+            return sourceEntity.teleport(targetEntity, cause);
         } else {
-            // Corrected: Get location from entity for teleportAsync
-            CompletableFuture<Boolean> future = player.teleportAsync(entity.getLocation(), cause);
+            CompletableFuture<Boolean> future = sourceEntity.teleportAsync(targetEntity.getLocation(), cause);
             try {
                 return future.get();
             } catch (InterruptedException | ExecutionException e) {
-                System.err.println("[Phantom-extra] Failed to perform asynchronous teleport with cause for player " + player.getName() + " to entity " + entity.getName() + " with cause " + cause + ".");
+                System.err.println("[Phantom-extra] Failed to perform asynchronous teleport with cause for entity " + sourceEntity.getName() + " to entity " + targetEntity.getName() + " with cause " + cause + ".");
                 e.printStackTrace();
                 return false;
             }
